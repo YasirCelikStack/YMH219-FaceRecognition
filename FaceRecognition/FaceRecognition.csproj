@@ -8,4 +8,17 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- OpenCV'nin C# sarmalayıcısı ve Windows için yerel (native) kütüphaneleri (opencv_contrib dahil: face modülü) -->
+    <PackageReference Include="OpenCvSharp4" Version="4.13.0.20261107" />
+    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.13.0.20261107" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Yüz algılama modeli derleme çıktısına (bin/.../Models) kopyalansın -->
+    <None Update="Models\haarcascade_frontalface_default.xml">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>
