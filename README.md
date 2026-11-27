@@ -64,8 +64,8 @@ ve gönüllülerden toplanmış küçük bir yerel örnek kümesiyle **tanıyan*
 Mesafe 80'in üstündeyse sonuç "Bilinmiyor" olur. Arayüzdeki yüzde, `100 - mesafe` ile hesaplanan kaba bir göstergedir.
 
 ## Ekran Görüntüleri
-![Tanıma](screenshots/tanima.png)
-![Eğitim](screenshots/egitim.png)
+Gizlilik nedeniyle bu projede yüz içeren ekran görüntüsü paylaşılmamıştır.
+Uygulama, değerlendirme sırasında canlı olarak çalıştırılıp gösterilebilir.
 
 ## Bilinen Sınırlamalar / Geliştirme Notları
 - LBPH basit bir yöntemdir; ışık, açı ve uzaklık değişince doğruluk düşer. Örnekleri farklı ışık ve açılarda eklemek sonucu iyileştirir.
