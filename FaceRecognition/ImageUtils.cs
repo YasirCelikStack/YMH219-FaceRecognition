@@ -1,3 +1,5 @@
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 using OpenCvSharp;
 
 namespace FaceRecognition
@@ -33,13 +35,41 @@ namespace FaceRecognition
             return face;
         }
 
-        /// <summary>Mat'i PictureBox'ta gösterilebilecek bir Bitmap'e çevirir.</summary>
+        /// <summary>
+        /// 3 kanallı (BGR) Mat'i PictureBox'ta gösterilebilecek bir Bitmap'e çevirir.
+        /// Pikseller bellekte satır satır doğrudan kopyalanır (resmi önce .bmp'ye kodlayıp
+        /// tekrar çözmekten çok daha hızlıdır). Format24bppRgb bellekte zaten B-G-R sırasındadır.
+        /// </summary>
         public static Bitmap ToBitmap(Mat mat)
         {
-            Cv2.ImEncode(".bmp", mat, out byte[] buffer);
-            using var stream = new MemoryStream(buffer);
-            using var temp = new Bitmap(stream);
-            return new Bitmap(temp); // kopyası: stream kapansa da bitmap kullanılabilir kalır
+            if (mat.Type() != MatType.CV_8UC3)
+            {
+                throw new ArgumentException("3 kanallı (BGR) görüntü bekleniyor.");
+            }
+
+            int width = mat.Width;
+            int height = mat.Height;
+            int rowBytes = width * 3;
+            long sourceStep = mat.Step();
+
+            var bitmap = new Bitmap(width, height, PixelFormat.Format24bppRgb);
+            BitmapData data = bitmap.LockBits(new Rectangle(0, 0, width, height),
+                                              ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb);
+            try
+            {
+                byte[] row = new byte[rowBytes];
+                for (int y = 0; y < height; y++)
+                {
+                    Marshal.Copy(IntPtr.Add(mat.Data, (int)(y * sourceStep)), row, 0, rowBytes);
+                    Marshal.Copy(row, 0, IntPtr.Add(data.Scan0, y * data.Stride), rowBytes);
+                }
+            }
+            finally
+            {
+                bitmap.UnlockBits(data);
+            }
+
+            return bitmap;
         }
 
         public static Mat LoadImage(string path, ImreadModes mode)

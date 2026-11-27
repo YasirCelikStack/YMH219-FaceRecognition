@@ -27,6 +27,10 @@ namespace FaceRecognition
                 return false;
             }
 
+            // Bazı kameralar varsayılan olarak 1280x720 verir; 640x480 hem yeterli hem çok daha hızlı.
+            capture.Set(VideoCaptureProperties.FrameWidth, 640);
+            capture.Set(VideoCaptureProperties.FrameHeight, 480);
+
             _capture = capture;
             return true;
         }

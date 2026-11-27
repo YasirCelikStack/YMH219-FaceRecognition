@@ -27,14 +27,15 @@ namespace FaceRecognition
         }
 
         /// <summary>Gri görüntüdeki tüm yüzlerin dikdörtgenlerini döndürür.</summary>
-        public Rect[] Detect(Mat gray)
+        /// <param name="minFaceSize">Bundan küçük (uzaktaki) yüzler yok sayılır (piksel).</param>
+        public Rect[] Detect(Mat gray, int minFaceSize = 80)
         {
             return _cascade.DetectMultiScale(
                 gray,
                 1.1,                               // scaleFactor: her adımda görüntü %10 küçültülerek aranır
                 5,                                 // minNeighbors: yüksek değer = daha az yanlış algılama
                 HaarDetectionTypes.ScaleImage,
-                new OpenCvSharp.Size(80, 80));     // minSize: çok küçük (uzaktaki) yüzleri yok say
+                new OpenCvSharp.Size(minFaceSize, minFaceSize));
         }
 
         public void Dispose() => _cascade.Dispose();
