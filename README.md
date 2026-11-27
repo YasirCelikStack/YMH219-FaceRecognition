@@ -15,9 +15,21 @@ ve gönüllülerden toplanmış küçük bir yerel örnek kümesiyle **tanıyan*
 - Algılanan her yüz dikdörtgenle işaretlenir (aynı karede birden fazla yüz desteklenir)
 - Tahmin edilen etiket ve güven skoru hem yüzün üstünde hem de sağ panelde gösterilir
   - Yeşil: tanındı, Turuncu: bilinmiyor (mesafe eşiğin üstünde), Mavi: model henüz eğitilmedi
-- **Basit eğitim ekranı**: etiket yaz → **Yüz Örneği Ekle** → **Modeli Eğit**
+- **Basit eğitim ekranı**: etiket yaz → **Yüz Örneği Ekle** veya **Otomatik Örnek Topla (10)** → **Modeli Eğit**
 - Eklenen yüz örnekleri `Dataset/<etiket>/` klasörüne kaydedilir; uygulama açılışta modeli otomatik eğitir
 - Kamera, model dosyası veya resim bulunamazsa kullanıcıya anlaşılır hata mesajı gösterilir
+- Durum çubuğunda anlık FPS (saniyedeki kare sayısı) gösterilir
+
+## Performans İyileştirmeleri
+| Önlem | Etkisi |
+|---|---|
+| Kare okuma ve işleme **arka plan iş parçacığında** (`Task.Run` + `CancellationToken`) | Arayüz donmaz, butonlar her zaman tepki verir |
+| Algılama **küçültülmüş görüntüde** (en fazla 320 px genişlik), kutular orijinal boyuta geri ölçeklenir | Haar Cascade yaklaşık 4 kat daha az piksel tarar |
+| Algılama **her 2 karede bir**, aradaki karede son kutular kullanılır | İşlem yükü yarıya iner |
+| Mat → Bitmap dönüşümü **doğrudan bellek kopyası** (`LockBits`) | Önceki .bmp kodla/çöz yönteminden çok daha hızlı |
+| Kamera çözünürlüğü **640x480**'e sabitlenir | 720p/1080p veren kameralarda gereksiz yük olmaz |
+| Arayüz önceki kareyi göstermeden yeni kare gönderilmez (kare atlama) | Gecikme birikmez, görüntü canlı kalır |
+| Tanıma modeli `lock` ile korunur | Eğitim sırasında arka plandaki tahminle çakışma olmaz |
 
 ## Sınıf Yapısı
 | Sınıf | Görevi |
@@ -25,7 +37,9 @@ ve gönüllülerden toplanmış küçük bir yerel örnek kümesiyle **tanıyan*
 | `CameraService` | Kamerayı açma (async), kare okuma, kapatma |
 | `FaceDetector` | Haar Cascade ile yüzlerin yerini bulma |
 | `FaceDataset` | Örnek yüzleri etiket klasörlerinde saklama / listeleme |
-| `FaceRecognizerService` | LBPH modelini eğitme ve tahmin yapma |
+| `FaceRecognizerService` | LBPH modelini eğitme ve tahmin yapma (iş parçacığı güvenli) |
+| `FrameProcessor` | Bir kareyi işler: küçültülmüş algılama → tanıma → kutuları çizme |
+| `FrameResult`, `FaceResult` | İşlenmiş karenin ve tek bir yüzün sonucu |
 | `RecognitionResult`, `TrainResult` | Tahmin ve eğitim sonuçlarını taşıyan kayıtlar (record) |
 | `ImageUtils` | Gri tonlama, yüz kırpma, Mat ↔ Bitmap, Türkçe karakterli yollarda güvenli dosya okuma/yazma |
 | `Form1` | Arayüz ve olayların bağlanması |
@@ -41,7 +55,8 @@ ve gönüllülerden toplanmış küçük bir yerel örnek kümesiyle **tanıyan*
 
 ## Kullanım
 1. **Kamera Başlat**'a basın.
-2. Etiket kutusuna adınızı yazın ve farklı açılardan **10-20 kez** **Yüz Örneği Ekle**'ye basın.
+2. Etiket kutusuna adınızı yazın ve **Otomatik Örnek Topla (10)**'a basın; toplama sürerken başınızı hafifçe sağa-sola çevirin.
+   (İsterseniz **Yüz Örneği Ekle (1)** ile tek tek de ekleyebilirsiniz. Kişi başı 10-20 örnek önerilir.)
 3. İkinci bir gönüllü (veya kendi yüzünüzün farklı bir durumu, ör. gözlüklü) için 2. adımı başka bir etiketle tekrarlayın.
 4. **Modeli Eğit**'e basın. Artık kameradaki yüzlerin üstünde tahmin edilen isim görünür.
 
@@ -55,7 +70,7 @@ Mesafe 80'in üstündeyse sonuç "Bilinmiyor" olur. Arayüzdeki yüzde, `100 - m
 ## Bilinen Sınırlamalar / Geliştirme Notları
 - LBPH basit bir yöntemdir; ışık, açı ve uzaklık değişince doğruluk düşer. Örnekleri farklı ışık ve açılarda eklemek sonucu iyileştirir.
 - Haar Cascade en iyi önden bakan yüzlerde çalışır; yandan bakan yüzleri kaçırabilir.
-- Görüntü işleme arayüz iş parçacığında (Timer) yapılır; zayıf bilgisayarlarda görüntü akıcılığı düşebilir.
+- Algılama 320 px genişliğe küçültülmüş görüntüde yapıldığı için büyük grup fotoğraflarındaki çok küçük yüzler kaçabilir.
 - `Dataset/` klasörü kişisel veri içerdiği için `.gitignore` ile repoya eklenmemiştir.
 
 ## Etik ve Kapsam
@@ -64,5 +79,5 @@ Kamuya açık alanlarda izinsiz kimlik tespiti, gizli görüntü toplama veya uz
 Uygulama görüntüleri hiçbir yere göndermez; tüm veriler bilgisayarda yerel olarak kalır.
 
 ## Geliştiren
-- Ad Soyad: ...
-- Öğrenci No: ...
+- Ad Soyad: Muhammet Yasir Çelik
+- Öğrenci No: 250542010
