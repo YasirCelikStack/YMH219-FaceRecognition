@@ -16,6 +16,10 @@ namespace FaceRecognition
         private LBPHFaceRecognizer? _recognizer;
         private readonly Dictionary<int, string> _labelNames = new(); // sayı -> isim (LBPH etiketleri sayı ister)
 
+        // Kamera görüntüsü arka plan iş parçacığında işlenir; eğitim ise arayüzden başlatılır.
+        // Aynı anda hem Predict hem model değişimi olmasın diye kilit (lock) kullanılır.
+        private readonly object _sync = new();
+
         public bool IsTrained => _recognizer != null;
         public int LabelCount => _labelNames.Count;
 
@@ -71,14 +75,17 @@ namespace FaceRecognition
                 var recognizer = LBPHFaceRecognizer.Create();
                 recognizer.Train(images, labels);
 
-                // Eski modeli bırak, yenisini kullan
-                _recognizer?.Dispose();
-                _recognizer = recognizer;
-
-                _labelNames.Clear();
-                foreach (var pair in labelIds)
+                // Eski modeli bırak, yenisini kullan (kilit içinde: o an Predict çalışıyor olabilir)
+                lock (_sync)
                 {
-                    _labelNames[pair.Value] = pair.Key;
+                    _recognizer?.Dispose();
+                    _recognizer = recognizer;
+
+                    _labelNames.Clear();
+                    foreach (var pair in labelIds)
+                    {
+                        _labelNames[pair.Value] = pair.Key;
+                    }
                 }
 
                 return new TrainResult(images.Count, labelIds.Count, skipped);
@@ -92,11 +99,18 @@ namespace FaceRecognition
         /// <summary>Kırpılmış gri yüzün kime ait olduğunu tahmin eder.</summary>
         public RecognitionResult Predict(Mat face)
         {
-            if (_recognizer == null) return RecognitionResult.NotTrained;
+            int labelId;
+            double distance;
+            string name;
 
-            _recognizer.Predict(face, out int labelId, out double distance);
+            lock (_sync)
+            {
+                if (_recognizer == null) return RecognitionResult.NotTrained;
 
-            string name = _labelNames.TryGetValue(labelId, out var n) ? n : "?";
+                _recognizer.Predict(face, out labelId, out distance);
+                name = _labelNames.TryGetValue(labelId, out var n) ? n : "?";
+            }
+
             bool isKnown = distance <= UnknownThreshold;
 
             return new RecognitionResult(isKnown ? name : "Bilinmiyor", name, distance, isKnown);
@@ -104,8 +118,11 @@ namespace FaceRecognition
 
         public void Dispose()
         {
-            _recognizer?.Dispose();
-            _recognizer = null;
+            lock (_sync)
+            {
+                _recognizer?.Dispose();
+                _recognizer = null;
+            }
         }
     }
 

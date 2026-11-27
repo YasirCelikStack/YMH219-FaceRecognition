@@ -1,22 +1,37 @@
+using System.Diagnostics;
 using OpenCvSharp;
 
 namespace FaceRecognition
 {
     public partial class Form1 : Form
     {
+        /// <summary>Algılama kaç karede bir çalışsın (2 = her iki karede bir; aradaki karede son kutular kullanılır).</summary>
+        private const int DetectEveryNFrames = 2;
+
+        /// <summary>"Otomatik örnek topla" kaç örnek alsın.</summary>
+        private const int BurstSampleCount = 10;
+
         // ---------- Servisler (iş mantığı) ----------
         private readonly CameraService _camera = new();
         private readonly FaceRecognizerService _recognizer = new();
         private readonly FaceDataset _dataset = new(Path.Combine(AppContext.BaseDirectory, "Dataset"));
-        private FaceDetector? _detector; // model dosyası yoksa null kalır
+        private readonly FaceDetector? _detector; // model dosyası yoksa null kalır
+        private readonly FrameProcessor _processor;
 
-        private readonly Mat _frame = new();     // kameradan okunan anlık kare
-        private readonly Mat _lastFrame = new(); // ekrandaki son görüntü (örnek eklerken kullanılır)
+        // ---------- Arka plan kamera döngüsü ----------
+        private CancellationTokenSource? _loopCts;
+        private Task? _loopTask;
+        private int _uiBusy; // 1 = arayüz hâlâ önceki kareyi gösteriyor (Interlocked ile kullanılır)
 
-        // Kamera görüntüsü yaklaşık 30 kare/saniye okunur
-        private readonly System.Windows.Forms.Timer _cameraTimer = new() { Interval = 33 };
+        // ---------- Arayüz durumu ----------
+        private Mat? _lastFaceCrop;        // en son algılanan en büyük yüz (örnek eklerken kullanılır)
+        private int _burstRemaining;       // otomatik örnek toplamada kalan sayı
+        private string _burstLabel = "";
+        private readonly Stopwatch _burstTimer = new();
+        private readonly Stopwatch _fpsTimer = new();
+        private int _fpsFrames;
 
-        // ---------- Arayüz ----------
+        // ---------- Arayüz kontrolleri ----------
         private readonly PictureBox _pictureBox = new()
         {
             Dock = DockStyle.Fill,
@@ -28,7 +43,8 @@ namespace FaceRecognition
         private readonly Button _btnStopCamera = new() { Text = "Kamera Durdur", Width = 230, Height = 32, Enabled = false };
         private readonly Button _btnSelectImage = new() { Text = "Görüntü Seç...", Width = 230, Height = 32 };
         private readonly TextBox _txtLabel = new() { Width = 230, PlaceholderText = "Etiket (ör. Yasir)" };
-        private readonly Button _btnAddSample = new() { Text = "Yüz Örneği Ekle", Width = 230, Height = 32 };
+        private readonly Button _btnAddSample = new() { Text = "Yüz Örneği Ekle (1)", Width = 230, Height = 32 };
+        private readonly Button _btnBurst = new() { Text = $"Otomatik Örnek Topla ({BurstSampleCount})", Width = 230, Height = 32 };
         private readonly Button _btnTrain = new() { Text = "Modeli Eğit", Width = 230, Height = 32 };
         private readonly Label _lblDataset = new() { Width = 230, Height = 90 };
         private readonly Label _lblResult = new()
@@ -41,22 +57,22 @@ namespace FaceRecognition
         private readonly StatusStrip _statusStrip = new();
         private readonly ToolStripStatusLabel _lblStatus = new();
 
-        private readonly Font _boxFont = new("Segoe UI", 12, FontStyle.Bold);
-
         public Form1()
         {
             InitializeComponent();
             BuildUi();
 
+            _detector = LoadDetector();
+            _processor = new FrameProcessor(_detector, _recognizer);
+
             _btnStartCamera.Click += BtnStartCamera_Click;
-            _btnStopCamera.Click += (s, e) => StopCamera();
+            _btnStopCamera.Click += async (s, e) => await StopCameraAsync();
             _btnSelectImage.Click += BtnSelectImage_Click;
             _btnAddSample.Click += BtnAddSample_Click;
+            _btnBurst.Click += BtnBurst_Click;
             _btnTrain.Click += BtnTrain_Click;
-            _cameraTimer.Tick += CameraTimer_Tick;
             FormClosing += Form1_FormClosing;
 
-            LoadDetector();
             TryAutoTrain();
             UpdateDatasetInfo();
         }
@@ -64,8 +80,8 @@ namespace FaceRecognition
         private void BuildUi()
         {
             Text = "Yüz Algılama ve Tanıma - YMH219";
-            Size = new System.Drawing.Size(1000, 620);
-            MinimumSize = new System.Drawing.Size(800, 500);
+            Size = new System.Drawing.Size(1000, 640);
+            MinimumSize = new System.Drawing.Size(800, 520);
             StartPosition = FormStartPosition.CenterScreen;
 
             var side = new FlowLayoutPanel
@@ -86,6 +102,7 @@ namespace FaceRecognition
             side.Controls.Add(MakeHeader("Eğitim"));
             side.Controls.Add(_txtLabel);
             side.Controls.Add(_btnAddSample);
+            side.Controls.Add(_btnBurst);
             side.Controls.Add(_btnTrain);
             side.Controls.Add(_lblDataset);
 
@@ -112,18 +129,18 @@ namespace FaceRecognition
 
         // ---------- Başlangıç ----------
 
-        private void LoadDetector()
+        private static FaceDetector? LoadDetector()
         {
             string path = Path.Combine(AppContext.BaseDirectory, "Models", "haarcascade_frontalface_default.xml");
             try
             {
-                _detector = new FaceDetector(path);
+                return new FaceDetector(path);
             }
             catch (Exception ex) when (ex is FileNotFoundException or InvalidOperationException)
             {
-                _detector = null;
                 MessageBox.Show($"{ex.Message}\n\nBeklenen konum:\n{path}\n\nYüz algılama devre dışı.",
                     "Model dosyası hatası", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return null;
             }
         }
 
@@ -153,10 +170,9 @@ namespace FaceRecognition
             {
                 opened = await _camera.StartAsync(0);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 opened = false;
-                SetStatus($"Kamera hatası: {ex.Message}", System.Drawing.Color.Red);
             }
 
             if (!opened)
@@ -169,37 +185,103 @@ namespace FaceRecognition
             }
 
             _btnStopCamera.Enabled = true;
-            _cameraTimer.Start();
+            _fpsFrames = 0;
+            _fpsTimer.Restart();
             SetStatus("● Kamera açık", System.Drawing.Color.Green);
+
+            // Kare okuma + işleme arka planda; arayüz donmaz.
+            _loopCts = new CancellationTokenSource();
+            CancellationToken token = _loopCts.Token;
+            _loopTask = Task.Run(() => CaptureLoop(token));
         }
 
-        private void StopCamera()
+        /// <summary>
+        /// Arka plan döngüsü: kare oku → işle → arayüze gönder.
+        /// Arayüz önceki kareyi henüz göstermediyse yeni kare atlanır (kuyruk birikmez, gecikme olmaz).
+        /// </summary>
+        private void CaptureLoop(CancellationToken token)
         {
-            _cameraTimer.Stop();
+            using var frame = new Mat();
+            int frameIndex = 0;
+
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    if (!_camera.ReadFrame(frame))
+                    {
+                        Thread.Sleep(10); // görüntü gelmedi, kısa bekle
+                        continue;
+                    }
+
+                    // Arayüz meşgulse bu kareyi atla
+                    if (Interlocked.CompareExchange(ref _uiBusy, 1, 0) != 0) continue;
+
+                    bool detect = frameIndex++ % DetectEveryNFrames == 0;
+                    FrameResult result = _processor.Process(frame, detect);
+
+                    if (!PostToUi(() => ShowFrame(result)))
+                    {
+                        result.Dispose(); // form kapanıyor
+                        return;
+                    }
+                }
+                catch (OpenCVException ex)
+                {
+                    PostToUi(() => OnCameraError(ex.Message));
+                    return;
+                }
+            }
+        }
+
+        /// <summary>Arka plan iş parçacığından arayüz iş parçacığına iş gönderir.</summary>
+        private bool PostToUi(Action action)
+        {
+            if (IsDisposed || !IsHandleCreated) return false;
+            try
+            {
+                BeginInvoke(action);
+                return true;
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
+        }
+
+        private async Task StopCameraAsync()
+        {
+            if (_loopCts != null)
+            {
+                _loopCts.Cancel();
+                if (_loopTask != null)
+                {
+                    try { await _loopTask; } catch (OperationCanceledException) { }
+                }
+                _loopCts.Dispose();
+                _loopCts = null;
+                _loopTask = null;
+            }
+
             _camera.Stop();
+            Interlocked.Exchange(ref _uiBusy, 0);
+            _burstRemaining = 0;
+
             _btnStartCamera.Enabled = true;
             _btnStopCamera.Enabled = false;
             SetStatus("Kamera durduruldu.", System.Drawing.Color.Gray);
         }
 
-        private void CameraTimer_Tick(object? sender, EventArgs e)
+        private async void OnCameraError(string message)
         {
-            try
-            {
-                if (!_camera.ReadFrame(_frame)) return; // bu karede görüntü gelmedi, sonrakini bekle
-                ProcessAndShow(_frame);
-            }
-            catch (OpenCVException ex)
-            {
-                StopCamera();
-                MessageBox.Show($"Görüntü işlenirken hata oluştu:\n{ex.Message}", "Hata",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
+            await StopCameraAsync();
+            MessageBox.Show($"Görüntü işlenirken hata oluştu:\n{message}", "Hata",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
 
         // ---------- Görüntü dosyası ----------
 
-        private void BtnSelectImage_Click(object? sender, EventArgs e)
+        private async void BtnSelectImage_Click(object? sender, EventArgs e)
         {
             using var dialog = new OpenFileDialog
             {
@@ -207,12 +289,12 @@ namespace FaceRecognition
             };
             if (dialog.ShowDialog() != DialogResult.OK) return;
 
-            if (_camera.IsRunning) StopCamera();
+            if (_camera.IsRunning) await StopCameraAsync();
 
             try
             {
                 using Mat image = ImageUtils.LoadImage(dialog.FileName, ImreadModes.Color);
-                ProcessAndShow(image);
+                ShowFrame(_processor.Process(image, runDetection: true));
                 SetStatus($"Görüntü: {Path.GetFileName(dialog.FileName)}", System.Drawing.Color.Black);
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or OpenCVException)
@@ -222,91 +304,85 @@ namespace FaceRecognition
             }
         }
 
-        // ---------- Algılama + tanıma + çizim ----------
+        // ---------- İşlenmiş kareyi gösterme ----------
 
-        private void ProcessAndShow(Mat bgr)
+        private void ShowFrame(FrameResult result)
         {
-            bgr.CopyTo(_lastFrame);
-
-            var results = new List<(Rect Box, RecognitionResult Result)>();
-
-            if (_detector != null)
+            try
             {
-                using Mat gray = ImageUtils.ToGray(bgr);
-                foreach (Rect box in _detector.Detect(gray))
+                if (IsDisposed)
                 {
-                    using Mat face = ImageUtils.CropFace(gray, box);
-                    results.Add((box, _recognizer.Predict(face)));
+                    result.Dispose();
+                    return;
                 }
-            }
 
-            Bitmap bitmap = ImageUtils.ToBitmap(bgr);
-            using (Graphics g = Graphics.FromImage(bitmap))
+                // Eski görüntüyü bellekten sil, yenisini göster
+                Image? old = _pictureBox.Image;
+                _pictureBox.Image = result.Image;
+                old?.Dispose();
+
+                // Son yüz kırpıntısını güncelle (algılama bu karede çalıştıysa)
+                if (result.DetectionRan)
+                {
+                    _lastFaceCrop?.Dispose();
+                    _lastFaceCrop = result.LargestFace;
+                    HandleBurst();
+                }
+
+                ShowResultText(result.Faces);
+                UpdateFps();
+            }
+            finally
             {
-                foreach (var (box, result) in results)
-                {
-                    DrawFaceBox(g, box, result);
-                }
+                Interlocked.Exchange(ref _uiBusy, 0); // arka plan döngüsü yeni kare gönderebilir
             }
-
-            // Eski görüntüyü bellekten sil, yenisini göster
-            Image? old = _pictureBox.Image;
-            _pictureBox.Image = bitmap;
-            old?.Dispose();
-
-            ShowResultText(results);
         }
 
-        private void DrawFaceBox(Graphics g, Rect box, RecognitionResult result)
+        private void ShowResultText(IReadOnlyList<FaceResult> faces)
         {
-            System.Drawing.Color color = !_recognizer.IsTrained ? System.Drawing.Color.DeepSkyBlue
-                                        : result.IsKnown ? System.Drawing.Color.LimeGreen
-                                        : System.Drawing.Color.OrangeRed;
-
-            using var pen = new Pen(color, 3);
-            g.DrawRectangle(pen, box.X, box.Y, box.Width, box.Height);
-
-            string text = _recognizer.IsTrained
-                ? $"{result.DisplayName} (%{result.ConfidencePercent})"
-                : "Yüz";
-
-            SizeF textSize = g.MeasureString(text, _boxFont);
-            float textY = Math.Max(0, box.Y - textSize.Height);
-
-            using var background = new SolidBrush(color);
-            g.FillRectangle(background, box.X, textY, textSize.Width, textSize.Height);
-            g.DrawString(text, _boxFont, Brushes.Black, box.X, textY);
-        }
-
-        private void ShowResultText(List<(Rect Box, RecognitionResult Result)> results)
-        {
-            if (_detector == null)
+            if (!_processor.CanDetect)
             {
                 _lblResult.Text = "Yüz algılama kapalı\n(model dosyası yok)";
                 return;
             }
 
-            if (results.Count == 0)
+            if (faces.Count == 0)
             {
                 _lblResult.Text = "Yüz bulunamadı";
                 return;
             }
 
             // En büyük (kameraya en yakın) yüzün sonucunu göster
-            var main = results.OrderByDescending(r => r.Box.Width * r.Box.Height).First().Result;
+            RecognitionResult main = faces.OrderByDescending(f => f.Box.Width * f.Box.Height).First().Result;
 
             if (!_recognizer.IsTrained)
             {
-                _lblResult.Text = $"Algılanan yüz: {results.Count}\nTanıma için önce örnek ekleyip modeli eğitin.";
+                _lblResult.Text = $"Algılanan yüz: {faces.Count}\nTanıma için önce örnek ekleyip modeli eğitin.";
                 return;
             }
 
             _lblResult.Text =
-                $"Algılanan yüz: {results.Count}\n" +
+                $"Algılanan yüz: {faces.Count}\n" +
                 $"Tahmin: {main.DisplayName}\n" +
                 $"En yakın: {main.NearestLabel}\n" +
                 $"Mesafe: {main.Distance:0.0} (eşik {FaceRecognizerService.UnknownThreshold})\n" +
                 $"Güven: %{main.ConfidencePercent}";
+        }
+
+        private void UpdateFps()
+        {
+            if (!_camera.IsRunning) return;
+
+            _fpsFrames++;
+            if (_fpsTimer.ElapsedMilliseconds >= 1000)
+            {
+                string burst = _burstRemaining > 0
+                    ? $"   |   Örnek toplanıyor: {BurstSampleCount - _burstRemaining}/{BurstSampleCount} (başını hafifçe çevir)"
+                    : "";
+                SetStatus($"● Kamera açık — {_fpsFrames} FPS{burst}", System.Drawing.Color.Green);
+                _fpsFrames = 0;
+                _fpsTimer.Restart();
+            }
         }
 
         // ---------- Eğitim ----------
@@ -314,39 +390,88 @@ namespace FaceRecognition
         private void BtnAddSample_Click(object? sender, EventArgs e)
         {
             string label = _txtLabel.Text.Trim();
-            if (label.Length == 0)
+            if (!ValidateCanAddSample(label)) return;
+
+            if (_lastFaceCrop == null)
             {
-                MessageBox.Show("Önce bir etiket (isim) yazın.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("Görüntüde yüz bulunamadı.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
-            if (_detector == null || _lastFrame.Empty())
+
+            if (SaveSample(label, _lastFaceCrop))
             {
-                MessageBox.Show("Önce kamerayı başlatın veya bir görüntü seçin.", "Bilgi",
+                SetStatus($"'{label}' için örnek eklendi. (Modeli yeniden eğitmeyi unutmayın)", System.Drawing.Color.Green);
+            }
+        }
+
+        /// <summary>Kameradan yaklaşık 0.3 sn arayla otomatik olarak birkaç örnek toplar.</summary>
+        private void BtnBurst_Click(object? sender, EventArgs e)
+        {
+            string label = _txtLabel.Text.Trim();
+            if (!ValidateCanAddSample(label)) return;
+
+            if (!_camera.IsRunning)
+            {
+                MessageBox.Show("Otomatik toplama için kamerayı başlatın.", "Bilgi",
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
+            _burstLabel = label;
+            _burstRemaining = BurstSampleCount;
+            _burstTimer.Restart();
+        }
+
+        /// <summary>Otomatik toplama açıksa ve yeterli süre geçtiyse son yüzü örnek olarak kaydeder.</summary>
+        private void HandleBurst()
+        {
+            if (_burstRemaining <= 0 || _lastFaceCrop == null) return;
+            if (_burstTimer.ElapsedMilliseconds < 300) return;
+
+            if (!SaveSample(_burstLabel, _lastFaceCrop))
+            {
+                _burstRemaining = 0; // kayıt hatası: toplamayı durdur
+                return;
+            }
+
+            _burstRemaining--;
+            _burstTimer.Restart();
+
+            if (_burstRemaining == 0)
+            {
+                SetStatus($"'{_burstLabel}' için {BurstSampleCount} örnek eklendi. Şimdi 'Modeli Eğit'e basın.",
+                    System.Drawing.Color.Green);
+            }
+        }
+
+        private bool ValidateCanAddSample(string label)
+        {
+            if (label.Length == 0)
+            {
+                MessageBox.Show("Önce bir etiket (isim) yazın.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return false;
+            }
+            if (!_processor.CanDetect)
+            {
+                MessageBox.Show("Yüz algılama modeli yüklenemediği için örnek eklenemez.", "Bilgi",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return false;
+            }
+            return true;
+        }
+
+        private bool SaveSample(string label, Mat face)
+        {
             try
             {
-                using Mat gray = ImageUtils.ToGray(_lastFrame);
-                Rect[] faces = _detector.Detect(gray);
-                if (faces.Length == 0)
-                {
-                    MessageBox.Show("Görüntüde yüz bulunamadı.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    return;
-                }
-
-                // Birden fazla yüz varsa en büyüğünü al
-                Rect biggest = faces.OrderByDescending(f => f.Width * f.Height).First();
-                using Mat face = ImageUtils.CropFace(gray, biggest);
                 _dataset.AddSample(label, face);
-
                 UpdateDatasetInfo();
-                SetStatus($"'{label}' için örnek eklendi. (Modeli yeniden eğitmeyi unutmayın)", System.Drawing.Color.Green);
+                return true;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or OpenCVException)
             {
                 MessageBox.Show($"Örnek kaydedilemedi:\n{ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return false;
             }
         }
 
@@ -396,12 +521,15 @@ namespace FaceRecognition
 
         private void Form1_FormClosing(object? sender, FormClosingEventArgs e)
         {
-            _cameraTimer.Stop();
+            // Önce arka plan döngüsünü durdur, sonra kaynakları bırak
+            _loopCts?.Cancel();
+            try { _loopTask?.Wait(1000); } catch (AggregateException) { }
+
             _camera.Dispose();
+            _processor.Dispose();
             _detector?.Dispose();
             _recognizer.Dispose();
-            _frame.Dispose();
-            _lastFrame.Dispose();
+            _lastFaceCrop?.Dispose();
             _pictureBox.Image?.Dispose();
         }
     }
