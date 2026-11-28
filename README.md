@@ -79,11 +79,12 @@ mesafe 0 → %100, mesafe = eşik → %60 (tanındı/bilinmiyor sınırı), mesa
 Örneğin eşik 80 iken mesafe 28,7 → %86.
 
 ## Ekran Görüntüleri
-Gizlilik nedeniyle ekran görüntüleri **Gizlilik modu açıkken** alınmıştır: yüzler bulanık, tanıma sonucu (etiket ve güven) görünür.
-Uygulama, değerlendirme sırasında gizlilik modu kapalı olarak canlı da gösterilebilir.
+Kamera ile canlı tanıma: algılanan yüz kutu içine alınır, kişinin adı ve benzerlik yüzdesi hem yüzün üstünde hem de
+sağdaki Sonuç kartında gösterilir; Kişiler kartında eğitimde kullanılan örnek sayısı görünür.
 
-![Kamera ile tanıma (gizlilik modu açık)](screenshots/tanima.png)
-![Eğitim ve örnek sayıları](screenshots/egitim.png)
+![Kamera ile tanıma](screenshots/tanima.png)
+
+> Not: İstenirse **Gizlilik modu** açılarak yüzler bulanıklaştırılmış hâlde ekran görüntüsü alınabilir.
 
 ## Bilinen Sınırlamalar / Geliştirme Notları
 - LBPH basit bir yöntemdir; ışık, açı ve uzaklık değişince doğruluk düşer. Örnekleri farklı ışık ve açılarda eklemek sonucu iyileştirir.
