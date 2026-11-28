@@ -1,3 +1,4 @@
+using System.Text.Json;
 using OpenCvSharp;
 using OpenCvSharp.Face;
 
@@ -7,21 +8,40 @@ namespace FaceRecognition
     /// LBPH (Local Binary Patterns Histograms) yöntemiyle yüz tanıma.
     /// Train: örnek yüzlerden her kişi için doku histogramları çıkarır.
     /// Predict: yeni yüzün histogramını örneklerle karşılaştırır, en yakın kişiyi ve mesafeyi verir.
+    /// Eğitilen model dosyaya kaydedilip açılışta tekrar yüklenebilir (yeniden eğitmeye gerek kalmaz).
     /// </summary>
     public sealed class FaceRecognizerService : IDisposable
     {
-        /// <summary>Mesafe bu değerden büyükse yüz "Bilinmiyor" sayılır. Ortama göre ayarlanabilir.</summary>
-        public const double UnknownThreshold = 80;
+        /// <summary>Varsayılan eşik: mesafe bu değerden büyükse yüz "Bilinmiyor" sayılır.</summary>
+        public const double DefaultThreshold = 80;
 
         private LBPHFaceRecognizer? _recognizer;
-        private readonly Dictionary<int, string> _labelNames = new(); // sayı -> isim (LBPH etiketleri sayı ister)
+        private Dictionary<int, string> _labelNames = new(); // sayı -> isim (LBPH etiketleri sayı ister)
+        private double _threshold = DefaultThreshold;
 
-        // Kamera görüntüsü arka plan iş parçacığında işlenir; eğitim ise arayüzden başlatılır.
-        // Aynı anda hem Predict hem model değişimi olmasın diye kilit (lock) kullanılır.
+        // Kamera görüntüsü arka plan iş parçacığında işlenir; eğitim ve ayar değişimi ise arayüzden.
+        // Aynı anda hem Predict hem model/eşik değişimi olmasın diye kilit (lock) kullanılır.
         private readonly object _sync = new();
 
-        public bool IsTrained => _recognizer != null;
-        public int LabelCount => _labelNames.Count;
+        public bool IsTrained
+        {
+            get { lock (_sync) return _recognizer != null; }
+        }
+
+        public int LabelCount
+        {
+            get { lock (_sync) return _labelNames.Count; }
+        }
+
+        /// <summary>
+        /// Tanıma eşiği. Küçük değer = daha seçici (yabancıyı tanıdık sanma azalır, ama tanıdığı da bazen "Bilinmiyor" der).
+        /// Büyük değer = daha hoşgörülü.
+        /// </summary>
+        public double Threshold
+        {
+            get { lock (_sync) return _threshold; }
+            set { lock (_sync) _threshold = Math.Clamp(value, 1, 500); }
+        }
 
         /// <summary>Veri kümesindeki tüm örneklerle modeli eğitir.</summary>
         public TrainResult Train(FaceDataset dataset)
@@ -76,17 +96,7 @@ namespace FaceRecognition
                 recognizer.Train(images, labels);
 
                 // Eski modeli bırak, yenisini kullan (kilit içinde: o an Predict çalışıyor olabilir)
-                lock (_sync)
-                {
-                    _recognizer?.Dispose();
-                    _recognizer = recognizer;
-
-                    _labelNames.Clear();
-                    foreach (var pair in labelIds)
-                    {
-                        _labelNames[pair.Value] = pair.Key;
-                    }
-                }
+                ReplaceModel(recognizer, labelIds.ToDictionary(p => p.Value, p => p.Key));
 
                 return new TrainResult(images.Count, labelIds.Count, skipped);
             }
@@ -102,6 +112,7 @@ namespace FaceRecognition
             int labelId;
             double distance;
             string name;
+            double threshold;
 
             lock (_sync)
             {
@@ -109,21 +120,78 @@ namespace FaceRecognition
 
                 _recognizer.Predict(face, out labelId, out distance);
                 name = _labelNames.TryGetValue(labelId, out var n) ? n : "?";
+                threshold = _threshold;
             }
 
-            bool isKnown = distance <= UnknownThreshold;
+            bool isKnown = distance <= threshold;
 
             return new RecognitionResult(isKnown ? name : "Bilinmiyor", name, distance, isKnown);
         }
 
-        public void Dispose()
+        // ---------- Modeli dosyaya kaydetme / dosyadan yükleme ----------
+
+        /// <summary>
+        /// Eğitilmiş modeli kaydeder: LBPH histogramları .yml dosyasına (OpenCV biçimi),
+        /// sayı → isim eşleşmesi .json dosyasına. Model yoksa hiçbir şey yapmaz.
+        /// </summary>
+        public void Save(string modelPath, string labelsPath)
+        {
+            lock (_sync)
+            {
+                if (_recognizer == null) return;
+
+                Directory.CreateDirectory(Path.GetDirectoryName(modelPath)!);
+                _recognizer.Write(modelPath);
+                File.WriteAllText(labelsPath, JsonSerializer.Serialize(_labelNames));
+            }
+        }
+
+        /// <summary>Kaydedilmiş modeli yükler. Dosyalar yoksa veya bozuksa false döner (uygulama çökmez).</summary>
+        public bool TryLoad(string modelPath, string labelsPath)
+        {
+            if (!File.Exists(modelPath) || !File.Exists(labelsPath)) return false;
+
+            LBPHFaceRecognizer? recognizer = null;
+            try
+            {
+                var labels = JsonSerializer.Deserialize<Dictionary<int, string>>(File.ReadAllText(labelsPath));
+                if (labels == null || labels.Count == 0) return false;
+
+                recognizer = LBPHFaceRecognizer.Create();
+                recognizer.Read(modelPath);
+
+                ReplaceModel(recognizer, labels);
+                return true;
+            }
+            catch (Exception ex) when (ex is OpenCVException or IOException or UnauthorizedAccessException or JsonException)
+            {
+                recognizer?.Dispose();
+                return false;
+            }
+        }
+
+        /// <summary>Modeli bellekten siler (ör. tüm kişiler silindiğinde).</summary>
+        public void Reset()
         {
             lock (_sync)
             {
                 _recognizer?.Dispose();
                 _recognizer = null;
+                _labelNames = new Dictionary<int, string>();
             }
         }
+
+        private void ReplaceModel(LBPHFaceRecognizer recognizer, Dictionary<int, string> labelNames)
+        {
+            lock (_sync)
+            {
+                _recognizer?.Dispose();
+                _recognizer = recognizer;
+                _labelNames = labelNames;
+            }
+        }
+
+        public void Dispose() => Reset();
     }
 
     /// <summary>Eğitim özeti: kaç örnek, kaç kişi, kaç dosya atlandı.</summary>
