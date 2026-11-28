@@ -125,7 +125,7 @@ namespace FaceRecognition
 
             bool isKnown = distance <= threshold;
 
-            return new RecognitionResult(isKnown ? name : "Bilinmiyor", name, distance, isKnown);
+            return new RecognitionResult(isKnown ? name : "Bilinmiyor", name, distance, isKnown, threshold);
         }
 
         // ---------- Modeli dosyaya kaydetme / dosyadan yükleme ----------

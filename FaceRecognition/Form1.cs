@@ -97,7 +97,7 @@ namespace FaceRecognition
         private readonly Label _lblThreshold = new() { Width = ContentWidth, Height = 22, Font = new Font("Segoe UI", 9.75f, FontStyle.Bold) };
         private readonly Label _lblThresholdHint = new() { Width = ContentWidth, Height = 34, ForeColor = Palette.Muted, Font = new Font("Segoe UI", 8.5f), Text = "Küçük = daha seçici (yabancıyı tanıdık sanmaz)\nBüyük = daha hoşgörülü" };
         private readonly CheckBox _chkPrivacy = new() { Text = "Gizlilik modu: yüzleri bulanıklaştır", Width = ContentWidth, Height = 26 };
-        private readonly CheckBox _chkCapture = new() { Text = "Algılanan yüzleri klasöre kaydet", Width = ContentWidth - 70, Height = 26 };
+        private readonly CheckBox _chkCapture = new() { Text = "Yüzleri klasöre kaydet", Width = ContentWidth - 76, Height = 26 };
         private readonly Button _btnOpenCaptures = SmallBtn("Klasör");
 
         private readonly StatusStrip _statusStrip = new() { SizingGrip = false, BackColor = Palette.Card };
@@ -272,6 +272,13 @@ namespace FaceRecognition
                 ? System.Drawing.Color.FromArgb(240, 243, 250)
                 : ControlPaint.Light(fill.Value, 0.15f);
             button.Font = new Font("Segoe UI", 9.75f, fill == null ? FontStyle.Regular : FontStyle.Bold);
+
+            // Düz (Flat) butonlar devre dışıyken de aynı renkte kalır; pasif olduğu anlaşılsın diye soluklaştır
+            button.EnabledChanged += (s, e) =>
+            {
+                button.BackColor = button.Enabled ? fill ?? Palette.Card : System.Drawing.Color.FromArgb(236, 238, 243);
+                button.FlatAppearance.BorderColor = button.Enabled ? fill ?? Palette.Border : Palette.Border;
+            };
         }
 
         // =====================================================================
@@ -608,7 +615,7 @@ namespace FaceRecognition
                 return;
             }
 
-            string detail = $"Mesafe: {main.Distance:0.0} (eşik {_recognizer.Threshold:0})\n" +
+            string detail = $"Mesafe: {main.Distance:0.0} (eşik {main.Threshold:0}, küçük = daha benzer)\n" +
                             $"En yakın: {main.NearestLabel}   •   Yüz: {faces.Count}";
             if (_captureWriter.SavedCount > 0 && _chkCapture.Checked) detail += $"\nKaydedilen yüz: {_captureWriter.SavedCount}";
 

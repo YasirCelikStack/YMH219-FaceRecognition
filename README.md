@@ -74,7 +74,9 @@ ve gönüllülerden toplanmış küçük bir yerel örnek kümesiyle **tanıyan*
 4. **Modeli Eğit**'e basın. Artık kameradaki yüzlerin üstünde tahmin edilen isim görünür.
 
 **Güven skoru hakkında:** LBPH bir *mesafe* değeri verir; küçük mesafe = daha benzer.
-Mesafe **tanıma eşiğinin** (varsayılan 80, Ayarlar kartından değiştirilebilir) üstündeyse sonuç "Bilinmiyor" olur. Arayüzdeki yüzde, `100 - mesafe` ile hesaplanan kaba bir göstergedir.
+Mesafe **tanıma eşiğinin** (varsayılan 80, Ayarlar kartından değiştirilebilir) üstündeyse sonuç "Bilinmiyor" olur. Arayüzdeki **benzerlik yüzdesi** gerçek bir olasılık değildir; mesafeyi eşiğe göre ölçekler:
+mesafe 0 → %100, mesafe = eşik → %60 (tanındı/bilinmiyor sınırı), mesafe = 2 × eşik → %0.
+Örneğin eşik 80 iken mesafe 28,7 → %86.
 
 ## Ekran Görüntüleri
 Gizlilik nedeniyle ekran görüntüleri **Gizlilik modu açıkken** alınmıştır: yüzler bulanık, tanıma sonucu (etiket ve güven) görünür.
