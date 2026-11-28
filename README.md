@@ -19,6 +19,14 @@ ve gönüllülerden toplanmış küçük bir yerel örnek kümesiyle **tanıyan*
 - Eklenen yüz örnekleri `Dataset/<etiket>/` klasörüne kaydedilir; uygulama açılışta modeli otomatik eğitir
 - Kamera, model dosyası veya resim bulunamazsa kullanıcıya anlaşılır hata mesajı gösterilir
 - Durum çubuğunda anlık FPS (saniyedeki kare sayısı) gösterilir
+- **Tanıma eşiği kaydırıcısı** (30–150): küçük değer daha seçici, büyük değer daha hoşgörülü; ayar `ayarlar.json`'da saklanır
+- **Model kaydetme / yükleme**: eğitilen LBPH modeli `Model/lbph_model.yml`, kişi adları `Model/etiketler.json` dosyasına yazılır.
+  Açılışta örnekler değişmediyse model **yeniden eğitilmeden** hemen yüklenir; değiştiyse otomatik yeniden eğitilir
+- **Kişi yönetimi**: kişiler ve örnek sayıları listesi (10'dan az örnek turuncu), **yeniden adlandırma**
+  (aynı ad varsa örnekler birleştirilir), **silme**, veri klasörünü açma; değişiklikten sonra model kendiliğinden güncellenir
+- **Algılanan yüzleri klasöre kaydet** *(isteğe bağlı)*: açıkken en büyük yüz, tahmin edilen kişinin adıyla
+  `Captures/<kişi>/` klasörüne saniyede en fazla bir kez kaydedilir (varsayılan kapalı, tamamen yerel)
+- Modern kart tasarımı: büyük sonuç kartı (ad + renkli güven çubuğu + mesafe/eşik), görüntü yokken bilgi ekranı
 - **Gizlilik modu**: açıldığında algılanan yüzler ekranda mozaikle bulanıklaştırılır; kutu, etiket ve güven skoru görünmeye devam eder.
   Yalnızca ekranda gösterilen görüntü değişir: algılama, tanıma ve örnek kaydı orijinal görüntüyle yapılır, yani doğruluk etkilenmez.
 
@@ -38,8 +46,11 @@ ve gönüllülerden toplanmış küçük bir yerel örnek kümesiyle **tanıyan*
 |---|---|
 | `CameraService` | Kamerayı açma (async), kare okuma, kapatma |
 | `FaceDetector` | Haar Cascade ile yüzlerin yerini bulma |
-| `FaceDataset` | Örnek yüzleri etiket klasörlerinde saklama / listeleme |
-| `FaceRecognizerService` | LBPH modelini eğitme ve tahmin yapma (iş parçacığı güvenli) |
+| `FaceDataset` | Örnek yüzleri etiket klasörlerinde saklama, listeleme, yeniden adlandırma/birleştirme, silme, son değişiklik zamanı |
+| `FaceCaptureWriter` | Algılanan yüzleri kişi klasörlerine kaydetme (saniyede en fazla bir) |
+| `FaceSettings` | Eşik ve gizlilik modu ayarlarını JSON dosyasında saklama |
+| `ConfidenceBar`, `InputDialog`, `Palette` | Renkli güven çubuğu (kendi çizdiğimiz kontrol), tek satırlık giriş penceresi, renkler |
+| `FaceRecognizerService` | LBPH modelini eğitme, tahmin, ayarlanabilir eşik, modeli dosyaya kaydetme/yükleme (iş parçacığı güvenli) |
 | `FrameProcessor` | Bir kareyi işler: küçültülmüş algılama → tanıma → (gizlilik modunda mozaik) → kutuları çizme |
 | `FrameResult`, `FaceResult` | İşlenmiş karenin ve tek bir yüzün sonucu |
 | `RecognitionResult`, `TrainResult` | Tahmin ve eğitim sonuçlarını taşıyan kayıtlar (record) |
@@ -63,7 +74,7 @@ ve gönüllülerden toplanmış küçük bir yerel örnek kümesiyle **tanıyan*
 4. **Modeli Eğit**'e basın. Artık kameradaki yüzlerin üstünde tahmin edilen isim görünür.
 
 **Güven skoru hakkında:** LBPH bir *mesafe* değeri verir; küçük mesafe = daha benzer.
-Mesafe 80'in üstündeyse sonuç "Bilinmiyor" olur. Arayüzdeki yüzde, `100 - mesafe` ile hesaplanan kaba bir göstergedir.
+Mesafe **tanıma eşiğinin** (varsayılan 80, Ayarlar kartından değiştirilebilir) üstündeyse sonuç "Bilinmiyor" olur. Arayüzdeki yüzde, `100 - mesafe` ile hesaplanan kaba bir göstergedir.
 
 ## Ekran Görüntüleri
 Gizlilik nedeniyle ekran görüntüleri **Gizlilik modu açıkken** alınmıştır: yüzler bulanık, tanıma sonucu (etiket ve güven) görünür.
