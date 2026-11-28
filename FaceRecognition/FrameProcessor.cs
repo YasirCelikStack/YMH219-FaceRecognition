@@ -19,9 +19,25 @@ namespace FaceRecognition
         private readonly FaceRecognizerService _recognizer;
         private readonly Font _labelFont = new("Segoe UI", 12, FontStyle.Bold);
 
+        /// <summary>Mozaikte bir karenin (pikselin) yüz genişliğine oranı: 1/12 → yüz yaklaşık 12x12 kareye bölünür.</summary>
+        private const int MosaicBlocks = 12;
+
         private List<FaceResult> _lastFaces = new();
 
+        // Arayüz iş parçacığı yazar, kamera iş parçacığı okur: volatile ile her zaman güncel değer görülür.
+        private volatile bool _privacyMode;
+
         public bool CanDetect => _detector != null;
+
+        /// <summary>
+        /// Gizlilik modu: açıkken yüz bölgeleri ekranda mozaikle bulanıklaştırılır.
+        /// Sadece GÖSTERİLEN görüntü etkilenir; algılama, tanıma ve örnek kaydı orijinal gri görüntüyle yapılır.
+        /// </summary>
+        public bool PrivacyMode
+        {
+            get => _privacyMode;
+            set => _privacyMode = value;
+        }
 
         public FrameProcessor(FaceDetector? detector, FaceRecognizerService recognizer)
         {
@@ -65,6 +81,15 @@ namespace FaceRecognition
                 }
 
                 _lastFaces = faces;
+            }
+
+            // Gizlilik modu: kutular çizilmeden önce yüzleri bulanıklaştır (gri kopya yukarıda zaten alındı)
+            if (_privacyMode)
+            {
+                foreach (FaceResult face in _lastFaces)
+                {
+                    Pixelate(bgr, face.Box);
+                }
             }
 
             Bitmap bitmap = ImageUtils.ToBitmap(bgr);
@@ -125,6 +150,34 @@ namespace FaceRecognition
             using var background = new SolidBrush(color);
             g.FillRectangle(background, box.X, textY, textSize.Width, textSize.Height);
             g.DrawString(text, _labelFont, Brushes.Black, box.X, textY);
+        }
+
+        /// <summary>
+        /// Verilen bölgeyi mozaikler: önce çok küçültülür, sonra "en yakın komşu" ile büyütülür.
+        /// Böylece yüz büyük renkli karelere dönüşür ve tanınmaz hâle gelir.
+        /// Kutu biraz genişletilir ki saç çizgisi ve çene de kapansın.
+        /// </summary>
+        private static void Pixelate(Mat image, Rect box)
+        {
+            int padX = box.Width / 10;
+            int padY = box.Height / 10;
+            var grown = new Rect(box.X - padX, box.Y - padY, box.Width + 2 * padX, box.Height + 2 * padY);
+
+            // Dikdörtgen resmin dışına taşmasın
+            Rect safe = grown.Intersect(new Rect(0, 0, image.Width, image.Height));
+            if (safe.Width <= 1 || safe.Height <= 1) return;
+
+            using var region = new Mat(image, safe); // asıl görüntünün bu bölgesine bakan görünüm (kopya değil)
+            using var small = new Mat();
+
+            // Kare (mozaik parçası) boyutu: yüz genişliğinin 1/12'si; en az 1 piksel
+            int cell = Math.Max(1, safe.Width / MosaicBlocks);
+            int smallWidth = Math.Max(1, safe.Width / cell);
+            int smallHeight = Math.Max(1, safe.Height / cell);
+
+            Cv2.Resize(region, small, new OpenCvSharp.Size(smallWidth, smallHeight), 0, 0, InterpolationFlags.Area);
+            // Hedef aynı boyutta olduğu için sonuç doğrudan asıl görüntünün içine yazılır
+            Cv2.Resize(small, region, new OpenCvSharp.Size(safe.Width, safe.Height), 0, 0, InterpolationFlags.Nearest);
         }
 
         private static int Area(Rect r) => r.Width * r.Height;

@@ -47,6 +47,13 @@ namespace FaceRecognition
         private readonly Button _btnBurst = new() { Text = $"Otomatik Örnek Topla ({BurstSampleCount})", Width = 230, Height = 32 };
         private readonly Button _btnTrain = new() { Text = "Modeli Eğit", Width = 230, Height = 32 };
         private readonly Label _lblDataset = new() { Width = 230, Height = 90 };
+        private readonly CheckBox _chkPrivacy = new()
+        {
+            Text = "Gizlilik modu: yüzleri bulanıklaştır",
+            AutoSize = false,
+            Width = 230,
+            Height = 36
+        };
         private readonly Label _lblResult = new()
         {
             Width = 230,
@@ -71,6 +78,7 @@ namespace FaceRecognition
             _btnAddSample.Click += BtnAddSample_Click;
             _btnBurst.Click += BtnBurst_Click;
             _btnTrain.Click += BtnTrain_Click;
+            _chkPrivacy.CheckedChanged += ChkPrivacy_CheckedChanged;
             FormClosing += Form1_FormClosing;
 
             TryAutoTrain();
@@ -108,6 +116,9 @@ namespace FaceRecognition
 
             side.Controls.Add(MakeHeader("Sonuç"));
             side.Controls.Add(_lblResult);
+
+            side.Controls.Add(MakeHeader("Gizlilik"));
+            side.Controls.Add(_chkPrivacy);
 
             _statusStrip.Items.Add(_lblStatus);
 
@@ -509,6 +520,24 @@ namespace FaceRecognition
             }
 
             _lblDataset.Text = "Örnekler:\n" + string.Join("\n", counts.Select(c => $"• {c.Key}: {c.Value}"));
+        }
+
+        // ---------- Gizlilik ----------
+
+        /// <summary>
+        /// Gizlilik modunu açar/kapatır. Kamera açıksa bir sonraki kareden itibaren etkili olur.
+        /// Ekran görüntüsü alırken yüzlerin görünmemesi için kullanılır; tanıma doğruluğunu etkilemez.
+        /// </summary>
+        private void ChkPrivacy_CheckedChanged(object? sender, EventArgs e)
+        {
+            _processor.PrivacyMode = _chkPrivacy.Checked;
+
+            if (!_camera.IsRunning)
+            {
+                SetStatus(_chkPrivacy.Checked
+                    ? "Gizlilik modu açık. Görüntüyü yeniden seçtiğinizde yüzler bulanık gösterilir."
+                    : "Gizlilik modu kapalı.", System.Drawing.Color.Gray);
+            }
         }
 
         // ---------- Yardımcılar ----------
