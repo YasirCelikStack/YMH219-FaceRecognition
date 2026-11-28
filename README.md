@@ -19,6 +19,8 @@ ve gönüllülerden toplanmış küçük bir yerel örnek kümesiyle **tanıyan*
 - Eklenen yüz örnekleri `Dataset/<etiket>/` klasörüne kaydedilir; uygulama açılışta modeli otomatik eğitir
 - Kamera, model dosyası veya resim bulunamazsa kullanıcıya anlaşılır hata mesajı gösterilir
 - Durum çubuğunda anlık FPS (saniyedeki kare sayısı) gösterilir
+- **Gizlilik modu**: açıldığında algılanan yüzler ekranda mozaikle bulanıklaştırılır; kutu, etiket ve güven skoru görünmeye devam eder.
+  Yalnızca ekranda gösterilen görüntü değişir: algılama, tanıma ve örnek kaydı orijinal görüntüyle yapılır, yani doğruluk etkilenmez.
 
 ## Performans İyileştirmeleri
 | Önlem | Etkisi |
@@ -38,7 +40,7 @@ ve gönüllülerden toplanmış küçük bir yerel örnek kümesiyle **tanıyan*
 | `FaceDetector` | Haar Cascade ile yüzlerin yerini bulma |
 | `FaceDataset` | Örnek yüzleri etiket klasörlerinde saklama / listeleme |
 | `FaceRecognizerService` | LBPH modelini eğitme ve tahmin yapma (iş parçacığı güvenli) |
-| `FrameProcessor` | Bir kareyi işler: küçültülmüş algılama → tanıma → kutuları çizme |
+| `FrameProcessor` | Bir kareyi işler: küçültülmüş algılama → tanıma → (gizlilik modunda mozaik) → kutuları çizme |
 | `FrameResult`, `FaceResult` | İşlenmiş karenin ve tek bir yüzün sonucu |
 | `RecognitionResult`, `TrainResult` | Tahmin ve eğitim sonuçlarını taşıyan kayıtlar (record) |
 | `ImageUtils` | Gri tonlama, yüz kırpma, Mat ↔ Bitmap, Türkçe karakterli yollarda güvenli dosya okuma/yazma |
@@ -64,8 +66,11 @@ ve gönüllülerden toplanmış küçük bir yerel örnek kümesiyle **tanıyan*
 Mesafe 80'in üstündeyse sonuç "Bilinmiyor" olur. Arayüzdeki yüzde, `100 - mesafe` ile hesaplanan kaba bir göstergedir.
 
 ## Ekran Görüntüleri
-Gizlilik nedeniyle bu projede yüz içeren ekran görüntüsü paylaşılmamıştır.
-Uygulama, değerlendirme sırasında canlı olarak çalıştırılıp gösterilebilir.
+Gizlilik nedeniyle ekran görüntüleri **Gizlilik modu açıkken** alınmıştır: yüzler bulanık, tanıma sonucu (etiket ve güven) görünür.
+Uygulama, değerlendirme sırasında gizlilik modu kapalı olarak canlı da gösterilebilir.
+
+![Kamera ile tanıma (gizlilik modu açık)](screenshots/tanima.png)
+![Eğitim ve örnek sayıları](screenshots/egitim.png)
 
 ## Bilinen Sınırlamalar / Geliştirme Notları
 - LBPH basit bir yöntemdir; ışık, açı ve uzaklık değişince doğruluk düşer. Örnekleri farklı ışık ve açılarda eklemek sonucu iyileştirir.
